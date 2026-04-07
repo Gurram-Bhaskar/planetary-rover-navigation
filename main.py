@@ -1336,7 +1336,7 @@ def get_tasks() -> list[TaskMeta]:
 
 
 @app.post("/reset", response_model=ResetResponse, tags=["OpenEnv"])
-def reset(req: ResetRequest) -> ResetResponse:
+def reset(req: ResetRequest | None = None) -> ResetResponse:
     """
     Initialise a new episode.
 
@@ -1344,6 +1344,10 @@ def reset(req: ResetRequest) -> ResetResponse:
     Waypoints are seeded from task config + optional RNG seed.
     Returns initial Observation and episode_id for all subsequent calls.
     """
+    # If the bot sends a null/empty request, manually create a default one
+    if req is None:
+        req = ResetRequest(task_id="easy", seed=None)
+
     if req.task_id not in TASK_CONFIG:
         raise HTTPException(422, f"task_id must be one of {sorted(TASK_CONFIG)}")
     eid, sim = _store.new(req.task_id, req.seed)
