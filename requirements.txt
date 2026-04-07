@@ -1,0 +1,31 @@
+# =============================================================================
+# Planetary Rover Navigation Simulator — Python dependencies
+# =============================================================================
+# Versions are pinned to the latest stable releases that are mutually
+# compatible as of mid-2025.  Pin to patch level for reproducibility.
+#
+# Runtime (server)
+# ────────────────
+fastapi==0.115.6          # ASGI web framework — routes, dependency injection
+uvicorn[standard]==0.32.1 # ASGI server with uvloop + httptools for performance
+pydantic==2.10.3          # Data validation (FastAPI v0.115 requires Pydantic v2)
+
+# Runtime (baseline client)
+# ─────────────────────────
+requests==2.32.3          # HTTP client used by baseline.py to call the server
+
+# Runtime (inference.py — LLM-driven agent)
+# ──────────────────────────────────────────
+openai==1.57.4            # AsyncOpenAI client; supports any OpenAI-compatible endpoint
+aiohttp==3.11.10          # Async HTTP client for non-blocking env server calls
+
+# No further runtime dependencies.
+# The simulator uses only Python stdlib: math, random, uuid, dataclasses,
+# enum, typing — nothing else needs installing.
+
+# =============================================================================
+# Optional / dev — uncomment when running tests or linting locally
+# =============================================================================
+# pytest==8.3.4
+# httpx==0.27.2           # async test client for FastAPI (pytest-asyncio)
+# ruff==0.8.4             # linter + formatter

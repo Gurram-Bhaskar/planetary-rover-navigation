@@ -1,0 +1,334 @@
+# =============================================================================
+# OpenEnv Specification — Planetary Rover Navigation Simulator
+# Meta PyTorch Hackathon — Round 1
+# =============================================================================
+
+name: planetary-rover-navigation
+version: "1.0.0"
+description: >
+  A planetary surface navigation simulator in which a rover agent must
+  traverse unknown terrain, manage battery reserves, avoid obstacles,
+  and reach a sequence of target waypoints.
+author: "Hackathon Team"
+license: "MIT"
+
+# ---------------------------------------------------------------------------
+# Environment metadata
+# ---------------------------------------------------------------------------
+env:
+  max_steps: 500                 # hard episode cap before truncation
+  step_dt: 1.0                   # simulated seconds per step
+  render_modes: ["none", "ascii", "rgb_array"]
+  coordinate_system: "cartesian" # right-hand, Z is up
+  units:
+    distance: "meters"
+    angle: "radians"
+    power: "watt-hours"
+    velocity: "meters_per_second"
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+tasks:
+  - id: "easy"
+    display_name: "Flat Plains Transit"
+    description: >
+      Navigate flat, obstacle-free terrain to a single stationary waypoint.
+      Battery drain is minimal. Graded purely on arrival accuracy and
+      step efficiency.
+    difficulty: 1
+    max_steps: 200
+    waypoints: 1
+    terrain_profile: "flat"
+    obstacle_density: 0.0
+    battery_drain_rate: 0.05      # % per step
+    target_score: 1.0
+
+  - id: "medium"
+    display_name: "Crater Avoidance"
+    description: >
+      A static crater-rim obstacle ring bisects the direct path to the
+      waypoint. Two perpendicular gaps allow passage on either side.
+      Collisions subtract 0.06 from the score (capped at -0.40).
+    difficulty: 2
+    max_steps: 300
+    waypoints: 1
+    terrain_profile: "flat"
+    obstacle_density: 0.0        # crater ring is placed deterministically, not randomly
+    battery_drain_rate: 0.01     # full-thrust drain × 1.0 multiplier
+    target_score: 1.0
+
+  - id: "hard"
+    display_name: "Battery Sprint"
+    description: >
+      The rover starts with only 35% battery charge and drain is
+      multiplied ×4. Any detour exhausts power before arrival.
+      Compute the direct vector to the waypoint and commit to a
+      straight-line full-thrust burn.
+    difficulty: 3
+    max_steps: 100
+    waypoints: 1
+    terrain_profile: "flat"
+    obstacle_density: 0.0
+    battery_drain_rate: 0.04     # full-thrust drain × 4.0 multiplier
+    target_score: 1.0
+
+# ---------------------------------------------------------------------------
+# Observation Space
+# ---------------------------------------------------------------------------
+observation_space:
+  type: "dict"
+  description: >
+    Full sensor readout returned by reset(), state(), and the 'obs'
+    field of step(). All float values are normalised to [-1, 1] or
+    [0, 1] unless noted as raw.
+
+  fields:
+
+    # --- Rover pose ---
+    rover_position:
+      type: "Box"
+      shape: [3]
+      dtype: "float32"
+      low: [-500.0, -500.0, -50.0]
+      high: [500.0, 500.0, 50.0]
+      description: "[x, y, z] absolute position of rover centroid in meters (raw)"
+
+    rover_heading:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [-3.14159]
+      high: [3.14159]
+      description: "Yaw angle in radians relative to +X axis (raw)"
+
+    rover_velocity:
+      type: "Box"
+      shape: [3]
+      dtype: "float32"
+      low: [-5.0, -5.0, -2.0]
+      high: [5.0, 5.0, 2.0]
+      description: "[vx, vy, vz] velocity vector in m/s (raw)"
+
+    # --- Target waypoint ---
+    target_position:
+      type: "Box"
+      shape: [3]
+      dtype: "float32"
+      low: [-500.0, -500.0, -50.0]
+      high: [500.0, 500.0, 50.0]
+      description: "[x, y, z] absolute position of the current active waypoint (raw)"
+
+    target_relative:
+      type: "Box"
+      shape: [3]
+      dtype: "float32"
+      low: [-1000.0, -1000.0, -100.0]
+      high: [1000.0, 1000.0, 100.0]
+      description: >
+        [dx, dy, dz] vector from rover to active waypoint (raw meters).
+        Use this for goal-conditioned policies.
+
+    target_distance:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [1414.0]             # sqrt(2) * 1000m diagonal
+      description: "Euclidean distance to active waypoint in meters (raw)"
+
+    waypoints_remaining:
+      type: "Discrete"
+      n: 4                        # 0–3 (0 = episode complete)
+      dtype: "int32"
+      description: "Number of waypoints not yet visited in current episode"
+
+    # --- Obstacle data ---
+    obstacle_map:
+      type: "Box"
+      shape: [8, 3]
+      dtype: "float32"
+      low: -1.0
+      high: 1.0
+      description: >
+        Closest 8 obstacles, each encoded as [dx_norm, dy_norm, dist_norm].
+        dx/dy are normalised to [-1, 1] relative to sensor range (50 m).
+        dist_norm is [0, 1] where 0 = contact, 1 = at max sensor range.
+        Rows are sorted by ascending distance. Padded with [0, 0, 1] when
+        fewer than 8 obstacles are within sensor range.
+
+    obstacle_count:
+      type: "Discrete"
+      n: 9                        # 0–8 within sensor range
+      dtype: "int32"
+      description: "Number of distinct obstacles currently within sensor range"
+
+    nearest_obstacle_distance:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [50.0]
+      description: "Raw distance (meters) to the closest obstacle. 50.0 if none in range."
+
+    # --- Battery ---
+    battery_level:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [1.0]
+      description: "Normalised remaining battery [0.0 = depleted, 1.0 = full]"
+
+    battery_drain_rate:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [1.0]
+      description: "Current drain rate as fraction of total capacity per step"
+
+    # --- Terrain ---
+    terrain_type:
+      type: "Discrete"
+      n: 4
+      dtype: "int32"
+      description: >
+        Integer encoding of the terrain tile under the rover.
+        0 = flat/sand, 1 = rocky, 2 = crater_floor, 3 = crater_rim
+
+    terrain_slope:
+      type: "Box"
+      shape: [2]
+      dtype: "float32"
+      low: [-1.0, -1.0]
+      high: [1.0, 1.0]
+      description: >
+        [slope_x, slope_y] surface normal projection components, normalised.
+        [0, 0] = level surface.
+
+    # --- Episode meta ---
+    steps_taken:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [500.0]
+      description: "Number of steps elapsed in the current episode (raw)"
+
+    steps_remaining_norm:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [1.0]
+      description: "Normalised remaining steps: (max_steps - steps_taken) / max_steps"
+
+# ---------------------------------------------------------------------------
+# Action Space
+# ---------------------------------------------------------------------------
+action_space:
+  type: "dict"
+  description: >
+    Motor commands sent to the rover each step via step(action).
+    All continuous values are clamped by the server to their declared bounds.
+
+  fields:
+
+    thrust:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [0.0]
+      high: [1.0]
+      description: >
+        Forward drive intensity [0.0 = stopped, 1.0 = full throttle].
+        Negative values are not valid; use brake to decelerate.
+
+    steering:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [-1.0]
+      high: [1.0]
+      description: >
+        Lateral steering command [-1.0 = hard left, 0.0 = straight, 1.0 = hard right].
+        Interpreted as a yaw rate multiplied by current speed.
+
+    brake:
+      type: "Discrete"
+      n: 2
+      dtype: "int32"
+      description: >
+        Binary brake flag. 1 = apply regenerative braking (reduces speed,
+        recovers 20 % of kinetic energy into battery). 0 = coast/drive.
+
+    vertical_thruster:
+      type: "Box"
+      shape: [1]
+      dtype: "float32"
+      low: [-0.2]
+      high: [0.2]
+      description: >
+        Small vertical adjustment thruster for crater terrain only
+        [-0.2 = push down / anchor, 0.2 = assist over lip].
+        Has no effect and incurs no battery cost on flat/rocky terrain.
+
+# ---------------------------------------------------------------------------
+# Reward shaping (informational — enforced by /grader)
+# ---------------------------------------------------------------------------
+reward:
+  description: >
+    Step reward signal returned in the 'reward' field of step().
+    The /grader endpoint computes the normalised episode score [0.0, 1.0]
+    from the full trajectory.
+  components:
+    waypoint_reached:
+      value: +10.0
+      condition: "target_distance < 2.0 meters"
+    step_penalty:
+      value: -0.01
+      condition: "every step"
+    collision_penalty:
+      value: -5.0
+      condition: "nearest_obstacle_distance < 0.5 meters"
+    battery_depleted:
+      value: -20.0
+      condition: "battery_level == 0.0"
+    efficiency_bonus:
+      value: +5.0
+      condition: "episode completed in < 50% of max_steps"
+
+# ---------------------------------------------------------------------------
+# Grading rubric (used by /grader endpoint)
+# ---------------------------------------------------------------------------
+grading:
+  note: >
+    Scoring is task-specific. The authoritative formula for each task is
+    returned by the /tasks endpoint in the scoring_formula field, and
+    enforced by the /grader endpoint.
+
+  easy:
+    formula: "proximity*0.85 + step_efficiency*0.15"
+    proximity:
+      definition: "1.0 - (min_distance_achieved / initial_distance)"
+      note: "Exactly 0.70 when the rover closed 70% of the gap. 1.0 on arrival."
+    step_efficiency:
+      definition: "1.0 - (steps_taken / max_steps)"
+
+  medium:
+    formula: "proximity*0.75 + step_efficiency*0.25 - min(collision_count*0.06, 0.40)"
+    collision_penalty:
+      per_collision: 0.06
+      cap: 0.40
+
+  hard:
+    formula: "proximity*0.65 + battery_efficiency*0.35"
+    battery_efficiency:
+      definition: "battery_remaining / starting_battery"
+      note: "Normalised against 0.35 starting charge, not full capacity."
+
+  output:
+    type: "float32"
+    low: 0.0
+    high: 1.0

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "planetary-rover-navigation"
+version = "1.0.0"
+description = "Planetary Rover Navigation Simulator - Meta PyTorch OpenEnv Hackathon"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "requests",
+    "openai",
+    "aiohttp",
+    "openenv-core>=0.2.0"
+]
+
+[project.scripts]
+server = "server.app:main"
