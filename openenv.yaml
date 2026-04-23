@@ -281,11 +281,13 @@ reward:
   description: >
     Step reward signal returned in the 'reward' field of step().
     The /grader endpoint computes the normalised episode score [0.0, 1.0]
-    from the full trajectory.
+    from the full trajectory.  Reward shaping uses potential-based and
+    vector-field techniques to prevent the "stationary exploit".
   components:
     waypoint_reached:
-      value: +10.0
+      value: +100.0
       condition: "target_distance < 2.0 meters"
+      note: "Massive asymmetric reward prevents early policy collapse."
     step_penalty:
       value: -0.01
       condition: "every step"
@@ -295,6 +297,20 @@ reward:
     battery_depleted:
       value: -20.0
       condition: "battery_level == 0.0"
+    potential_based_distance_shaping:
+      value: "(prev_dist - curr_dist) / initial_distance"
+      condition: "every step while waypoint is active"
+      note: >
+        Φ(s) = −distance.  Shaping = Φ(s') − Φ(s) = prev_dist − curr_dist.
+        Normalised by initial_distance for spawn-distance independence.
+        Standing still yields shaping = 0, so step penalty + drain = net negative.
+    vector_field_obstacle_shaping:
+      value: "up to +0.3"
+      condition: "any obstacle within 10 metres"
+      note: >
+        Computes attractive (goal) + repulsive (obstacles) gradient blend,
+        takes orthogonal tangent, rewards cosine similarity with rover heading.
+        Scaled by proximity urgency (closer obstacle = stronger signal).
     efficiency_bonus:
       value: +5.0
       condition: "episode completed in < 50% of max_steps"

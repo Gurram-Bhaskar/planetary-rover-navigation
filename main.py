@@ -567,6 +567,9 @@ class RoverSim:
     min_distance:     float = 0.0   # running minimum; drives partial-progress score
     collision_count:  int   = 0     # cumulative obstacle contacts
 
+    # Reward-shaping state — tracks distance at previous step for potential-based shaping
+    _prev_distance:   float = 0.0   # set equal to initial_distance at reset
+
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
@@ -674,20 +677,129 @@ class RoverSim:
     # Reward  (called by step)
     # -------------------------------------------------------------------
 
-    def _compute_reward(self, waypoint_hit: bool, collided: bool, drain: float) -> float:
-        r  = -0.01                    # step penalty
-        r -= drain * 2.0              # battery efficiency incentive
-        if waypoint_hit:  r += 10.0
-        if collided:      r -= 5.0
-        if self.battery <= 0.0: r -= 20.0
-        # Distance shaping toward active waypoint
+    def _compute_reward(
+        self,
+        waypoint_hit: bool,
+        collided: bool,
+        drain: float,
+        prev_dist: float,
+    ) -> float:
+        """
+        Upgraded reward with two anti-exploit shaping mechanisms:
+
+        1. **Potential-Based Reward Shaping (flat plains)**
+           Φ(s) = −distance_to_goal.  Shaping = γΦ(s') − Φ(s) ≈ prev_dist − curr_dist.
+           If the rover stands still, curr_dist == prev_dist → shaping = 0,
+           so the step penalty + battery drain yield a guaranteed net negative.
+
+        2. **Vector-Field Reward Shaping (craters / obstacles)**
+           When any obstacle is within 10 m, compute:
+             • Attractive gradient  g_a = normalise(goal − pos)
+             • Repulsive gradient   g_r = Σ (1/d² − 1/D²) · normalise(pos − obs)
+           Blend into a combined desired vector, take its orthogonal tangent
+           (so the rover flows *around* obstacles rather than into them),
+           and reward based on cosine similarity between the rover's actual
+           heading vector and the tangent vector.
+
+        The massive +100.0 asymmetric waypoint reward is preserved to
+        anchor the policy toward goal completion.
+        """
+        r = 0.0
+
+        # ── 0. Constant step cost (time pressure) ──────────────────────
+        r -= 0.01
+
+        # ── 1. Battery efficiency penalty ──────────────────────────────
+        r -= drain * 2.0
+        if self.battery <= 0.0:
+            r -= 20.0
+
+        # ── 2. Collision penalty ───────────────────────────────────────
+        if collided:
+            r -= 5.0
+
+        # ── 3. Waypoint reached — massive asymmetric reward ───────────
+        if waypoint_hit:
+            r += 100.0
+
+        # ── 4. Potential-based distance shaping ────────────────────────
+        #   Φ(s) = −dist  →  F_shape = Φ(s') − Φ(s) = prev_dist − curr_dist
+        #   Stationary rover: curr == prev → shaping = 0 → net reward < 0
         wp = self.active_waypoint
         if wp:
-            dist = math.hypot(wp[0] - self.px, wp[1] - self.py)
-            r += max(0.0, (100.0 - dist) * 0.001)
-        # Efficiency bonus: episode done in < 50% of budget
-        if self.waypoints_hit == len(self.waypoint_list) and self.steps < self.max_steps * 0.5:
+            curr_dist = math.hypot(wp[0] - self.px, wp[1] - self.py)
+            # Scale by 1/initial_distance so shaping magnitude is
+            # independent of spawn distance (reward ∈ roughly [-1, +1])
+            scale = 1.0 / max(self.initial_distance, 1.0)
+            distance_shaping = (prev_dist - curr_dist) * scale
+            r += distance_shaping
+        else:
+            curr_dist = 0.0
+
+        # ── 5. Vector-field shaping near obstacles (within 10 m) ───────
+        INFLUENCE_RADIUS = 10.0
+        nearest_obs = self.obstacles.nearest_n(self.px, self.py, 8)
+        close_obstacles = [(dx, dy, d) for dx, dy, d in nearest_obs
+                           if d < INFLUENCE_RADIUS and d > 1e-6]
+
+        if close_obstacles and wp:
+            # 5a. Attractive gradient: unit vector toward goal
+            g_ax = wp[0] - self.px
+            g_ay = wp[1] - self.py
+            g_a_mag = math.hypot(g_ax, g_ay)
+            if g_a_mag > 1e-6:
+                g_ax /= g_a_mag
+                g_ay /= g_a_mag
+            else:
+                g_ax, g_ay = 0.0, 0.0
+
+            # 5b. Repulsive gradient: sum of inverse-square repulsions
+            #     g_r = Σ_i  (1/d_i² − 1/D²) · normalise(pos − obs_i)
+            D = INFLUENCE_RADIUS
+            g_rx, g_ry = 0.0, 0.0
+            for dx, dy, d in close_obstacles:
+                # dx, dy point FROM rover TO obstacle; we want FROM obstacle
+                repel_x, repel_y = -dx, -dy
+                rep_mag = math.hypot(repel_x, repel_y)
+                if rep_mag > 1e-6:
+                    repel_x /= rep_mag
+                    repel_y /= rep_mag
+                strength = (1.0 / (d * d)) - (1.0 / (D * D))
+                g_rx += strength * repel_x
+                g_ry += strength * repel_y
+
+            # 5c. Blend attractive + repulsive into desired vector
+            alpha = 0.5   # blending weight for repulsive component
+            blend_x = g_ax + alpha * g_rx
+            blend_y = g_ay + alpha * g_ry
+
+            # 5d. Compute tangent (90° CCW rotation of the blended vector)
+            #     so the rover is guided to flow *around* the obstacle field
+            tangent_x = -blend_y
+            tangent_y =  blend_x
+            t_mag = math.hypot(tangent_x, tangent_y)
+            if t_mag > 1e-6:
+                tangent_x /= t_mag
+                tangent_y /= t_mag
+
+                # 5e. Rover's actual heading unit vector
+                hx = math.cos(self.heading)
+                hy = math.sin(self.heading)
+
+                # 5f. Cosine similarity (absolute value — either tangent
+                #     direction is acceptable, clockwise or counter-clockwise)
+                cos_sim = abs(hx * tangent_x + hy * tangent_y)
+
+                # Scale reward by proximity urgency: closer → stronger signal
+                min_d = close_obstacles[0][2]   # already sorted ascending
+                proximity_weight = 1.0 - (min_d / INFLUENCE_RADIUS)
+                r += 0.3 * cos_sim * proximity_weight
+
+        # ── 6. Efficiency bonus: episode done in < 50% of step budget ─
+        if (self.waypoints_hit == len(self.waypoint_list)
+                and self.steps < self.max_steps * 0.5):
             r += 5.0
+
         return r
 
     # -------------------------------------------------------------------
@@ -770,6 +882,10 @@ class RoverSim:
 
         self.steps += 1
 
+        # Snapshot distance BEFORE kinematics so potential-based shaping
+        # can compute Δd = prev_dist − curr_dist for this step.
+        prev_dist = self._prev_distance
+
         self._apply_kinematics(action)
         drain        = self._update_battery(action)
         collided, nd = self._check_collision()
@@ -780,6 +896,9 @@ class RoverSim:
         current_dist = math.hypot(wp[0] - self.px, wp[1] - self.py)
         if current_dist < self.min_distance:
             self.min_distance = current_dist
+
+        # Update _prev_distance for the NEXT step's shaping computation
+        self._prev_distance = current_dist
 
         all_done     = self.waypoints_hit == len(self.waypoint_list)
         batt_dead    = self.battery <= 0.0
@@ -797,7 +916,7 @@ class RoverSim:
         else:
             termination_reason = "unknown"
 
-        reward = self._compute_reward(wp_hit, collided, drain)
+        reward = self._compute_reward(wp_hit, collided, drain, prev_dist)
         self.total_reward += reward
 
         obs = self._build_obs()
@@ -908,6 +1027,7 @@ def _make_sim(task_id: str, seed: int | None) -> RoverSim:
         done=False, truncated=False, waypoints_hit=0,
         initial_distance=initial_dist,
         min_distance=initial_dist,
+        _prev_distance=initial_dist,
         collision_count=0,
     )
 

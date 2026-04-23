@@ -335,15 +335,16 @@ step_efficiency = 1.0 − (steps_taken / max_steps)
 
 The step reward returned by `/step` is used for online RL training. It is separate from the grader score.
 
-| Event | Reward |
-|---|---|
-| Every step | −0.01 (step penalty) |
-| Battery drain | −drain × 2.0 (efficiency incentive) |
-| Waypoint reached | +10.0 |
-| Obstacle collision | −5.0 |
-| Battery depleted | −20.0 |
-| Distance shaping | +max(0, (100 − dist) × 0.001) |
-| Episode complete in < 50% of budget | +5.0 (efficiency bonus) |
+| Event | Reward | Notes |
+|---|---|---|
+| Every step | −0.01 | Constant time-pressure penalty |
+| Battery drain | −drain × 2.0 | Efficiency incentive |
+| **Waypoint reached** | **+100.0** | Massive asymmetric reward to prevent early policy collapse |
+| Obstacle collision | −5.0 | Speed zeroed, micro battery penalty |
+| Battery depleted | −20.0 | Terminal penalty |
+| **Potential-based distance shaping** | `(prev_dist − curr_dist) / initial_dist` | Positive when closing distance; **zero when stationary** (defeats the "stand still" exploit) |
+| **Vector-field shaping (near obstacles)** | up to +0.3 | Active within 10 m of obstacles; rewards cosine similarity between rover heading and computed tangent vector (repulsive + attractive gradient blend) |
+| Episode complete in < 50% of budget | +5.0 | Efficiency bonus |
 
 ---
 
@@ -352,9 +353,10 @@ The step reward returned by `/step` is used for online RL training. It is separa
 ```
 planetary-rover-env/
 ├── openenv.yaml      # Typed observation + action space declarations
-├── main.py           # FastAPI server — physics engine + all routes (1507 lines)
-├── baseline.py       # Inference script — 3 task-specific agents + grader client
-├── requirements.txt  # 4 pinned dependencies
+├── main.py           # FastAPI server — physics engine + all routes (1632 lines)
+├── inference.py      # LLM-driven inference agent (HF Inference API)
+├── train.py          # GRPO training script (Unsloth 4-bit + TRL GRPOTrainer)
+├── requirements.txt  # Pinned runtime dependencies
 ├── Dockerfile        # Two-stage optimised build, port 7860, non-root user
 └── README.md         # This file
 ```
