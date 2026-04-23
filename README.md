@@ -2,11 +2,11 @@
 title: Planetary Rover Navigation Simulator
 emoji: 🪐
 colorFrom: indigo
-colorTo: teal
+colorTo: blue
 sdk: docker
 app_port: 7860
 license: mit
-short_description: OpenEnv-compliant RL environment — Meta PyTorch Hackathon Round 1
+short_description: OpenEnv RL environment — Meta PyTorch Hackathon
 ---
 
 # Planetary Rover Navigation Simulator
