@@ -60,6 +60,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Add the /install prefix to the module search path
     PYTHONPATH=/install/lib/python3.12/site-packages
 
+# Triton kernels used by Unsloth compile small helpers at runtime and
+# require a C/C++ compiler to be available in the runtime image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root user — Hugging Face Spaces requires this for security.
 # UID 1000 matches the default HF Spaces user.
 RUN useradd --uid 1000 --create-home --shell /bin/bash rover
