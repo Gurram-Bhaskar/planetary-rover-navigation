@@ -71,7 +71,8 @@ LEARNING_RATE        = 1e-6
 KL_COEF              = 0.04    # β for KL penalty
 NUM_TRAIN_EPOCHS     = 2
 PER_DEVICE_BATCH     = 1       # keep at 1 for 6 GB
-GRAD_ACCUM_STEPS     = 4
+GRAD_ACCUM_STEPS     = int(os.getenv("ROVER_GRAD_ACCUM_STEPS", "8"))
+WARMUP_STEPS         = int(os.getenv("ROVER_WARMUP_STEPS", "10"))
 
 # Reward tuning
 FORMAT_REWARD_GOOD   = 1.0
@@ -269,12 +270,40 @@ _ACTION_FIELDS = {
 }
 
 
-def parse_action_from_completion(text: str) -> dict[str, Any] | None:
+def _completion_to_text(completion: Any) -> str:
+    """Convert TRL completion payloads (str/list/dict) into plain text."""
+    if completion is None:
+        return ""
+
+    if isinstance(completion, str):
+        return completion
+
+    if isinstance(completion, bytes):
+        return completion.decode("utf-8", errors="ignore")
+
+    if isinstance(completion, dict):
+        for key in ("content", "text", "completion", "generated_text"):
+            if key in completion:
+                return _completion_to_text(completion[key])
+        return str(completion)
+
+    if isinstance(completion, list):
+        parts = [_completion_to_text(item) for item in completion]
+        return "\n".join(part for part in parts if part)
+
+    return str(completion)
+
+
+def parse_action_from_completion(completion: Any) -> dict[str, Any] | None:
     """
     Extract and validate an action JSON from <action>…</action> tags.
 
     Returns the parsed action dict if valid, None otherwise.
     """
+    text = _completion_to_text(completion)
+    if not text:
+        return None
+
     match = _ACTION_RE.search(text)
     if not match:
         return None
@@ -313,7 +342,7 @@ def parse_action_from_completion(text: str) -> dict[str, Any] | None:
     return action
 
 
-def format_reward_fn(completions: list[str], **kwargs) -> list[float]:
+def format_reward_fn(completions: list[Any], **kwargs) -> list[float]:
     """
     Reward Function 1 — The Format Gatekeeper.
 
@@ -326,7 +355,8 @@ def format_reward_fn(completions: list[str], **kwargs) -> list[float]:
     """
     rewards: list[float] = []
 
-    for text in completions:
+    for completion in completions:
+        text = _completion_to_text(completion)
         action = parse_action_from_completion(text)
         if action is None:
             rewards.append(FORMAT_REWARD_BAD)
@@ -352,7 +382,7 @@ def format_reward_fn(completions: list[str], **kwargs) -> list[float]:
 # Reward Function 2 — Environment Reward
 # =============================================================================
 
-def environment_reward_fn(completions: list[str], **kwargs) -> list[float]:
+def environment_reward_fn(completions: list[Any], **kwargs) -> list[float]:
     """
     Reward Function 2 — The Environment.
 
@@ -369,9 +399,9 @@ def environment_reward_fn(completions: list[str], **kwargs) -> list[float]:
 
     rewards: list[float] = []
 
-    for i, text in enumerate(completions):
+    for i, completion in enumerate(completions):
         # -- Parse action --------------------------------------------------
-        action = parse_action_from_completion(text)
+        action = parse_action_from_completion(completion)
         if action is None:
             rewards.append(0.0)
             continue
@@ -470,7 +500,7 @@ def build_training_config() -> GRPOConfig:
         output_dir             = OUTPUT_DIR,
 
         # ── GRPO-specific ─────────────────────────────────────────────
-        num_generations        = NUM_GENERATIONS,     # group size = 4
+        num_generations        = NUM_GENERATIONS,     # group size per prompt
         max_prompt_length      = MAX_PROMPT_LENGTH,   # 256 tokens
         max_completion_length  = MAX_COMPLETION_LENGTH,# 256 tokens
         beta                   = KL_COEF,             # KL penalty coeff
@@ -478,12 +508,13 @@ def build_training_config() -> GRPOConfig:
         # ── Optimiser ─────────────────────────────────────────────────
         learning_rate          = LEARNING_RATE,        # 1e-6
         lr_scheduler_type      = "cosine",
-        warmup_ratio           = 0.05,
+        warmup_steps           = WARMUP_STEPS,
         max_grad_norm          = 1.0,
 
         # ── Batch / accumulation ──────────────────────────────────────
         per_device_train_batch_size = PER_DEVICE_BATCH,   # 1 for 6 GB
-        gradient_accumulation_steps = GRAD_ACCUM_STEPS,   # effective batch = 4
+        # Keep (per_device * grad_accum * world_size) divisible by num_generations.
+        gradient_accumulation_steps = GRAD_ACCUM_STEPS,
         num_train_epochs            = NUM_TRAIN_EPOCHS,
 
         # ── Precision / memory ────────────────────────────────────────
