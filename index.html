@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rover Navigation Radar</title>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: monospace; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .dashboard { display: flex; gap: 20px; margin-bottom: 20px; }
+        .panel { background: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
+        input { background: #0f172a; color: #38bdf8; border: 1px solid #38bdf8; padding: 5px; border-radius: 4px; font-family: monospace;}
+        button { background: #38bdf8; color: #0f172a; border: none; padding: 5px 15px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        button:hover { background: #7dd3fc; }
+        canvas { background: #020617; border-radius: 50%; box-shadow: 0 0 20px rgba(56, 189, 248, 0.2); border: 2px solid #334155; }
+        .data-readout { color: #10b981; font-size: 14px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h2>🌍 OpenEnv: Planetary Rover Live Telemetry</h2>
+    <div class="dashboard">
+        <div class="panel">
+            <label>Episode ID:</label>
+            <input type="text" id="ep_id" placeholder="Paste UUID here" size="40">
+            <button onclick="startTracking()">Track Rover</button>
+        </div>
+        <div class="panel" id="telemetry">
+            <div>Battery: <span id="bat" class="data-readout">--</span></div>
+            <div>Distance to Target: <span id="dist" class="data-readout">--</span></div>
+        </div>
+    </div>
+    <canvas id="radar" width="600" height="600"></canvas>
+    <script>
+        const canvas = document.getElementById('radar');
+        const ctx = canvas.getContext('2d');
+        let trackingInterval;
+
+        function startTracking() {
+            if(trackingInterval) clearInterval(trackingInterval);
+            trackingInterval = setInterval(fetchState, 100);
+        }
+
+        async function fetchState() {
+            const epId = document.getElementById('ep_id').value;
+            if(!epId) return;
+            try {
+                const res = await fetch(`/state?episode_id=${epId}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('bat').innerText = (data.battery_level * 100).toFixed(1) + '%';
+                document.getElementById('dist').innerText = data.target_distance.toFixed(1) + 'm';
+                drawRadar(data);
+            } catch (e) {
+                console.error("Connection lost");
+            }
+        }
+
+        function drawRadar(obs) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const scale = 0.6;
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+
+            // Draw range rings
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 1;
+            for(let i=1; i<=5; i++) {
+                ctx.beginPath(); ctx.arc(cx, cy, i * 100 * scale, 0, Math.PI*2); ctx.stroke();
+            }
+
+            // Target position (Vec3 with .x, .y fields)
+            const tx = cx + obs.target_position.x * scale;
+            const ty = cy - obs.target_position.y * scale;
+            ctx.fillStyle = '#10b981';
+            ctx.shadowBlur = 10; ctx.shadowColor = '#10b981';
+            ctx.beginPath(); ctx.arc(tx, ty, 6, 0, Math.PI*2); ctx.fill();
+
+            // Rover position (Vec3 with .x, .y fields)
+            const rx = cx + obs.rover_position.x * scale;
+            const ry = cy - obs.rover_position.y * scale;
+
+            // Obstacles (ObstacleEntry with .dx_norm, .dy_norm, .dist_norm fields)
+            ctx.fillStyle = '#ef4444';
+            ctx.shadowBlur = 5; ctx.shadowColor = '#ef4444';
+            obs.obstacle_map.forEach(obsData => {
+                if(obsData.dist_norm < 1.0) {
+                     const ox = rx + (obsData.dx_norm * 50) * scale;
+                     const oy = ry - (obsData.dy_norm * 50) * scale;
+                     ctx.beginPath(); ctx.arc(ox, oy, 4, 0, Math.PI*2); ctx.fill();
+                }
+            });
+
+            // Rover triangle (heading indicator)
+            ctx.save();
+            ctx.translate(rx, ry);
+            ctx.rotate(-obs.rover_heading);
+            ctx.fillStyle = '#38bdf8';
+            ctx.shadowBlur = 10; ctx.shadowColor = '#38bdf8';
+            ctx.beginPath();
+            ctx.moveTo(12, 0);
+            ctx.lineTo(-8, 8);
+            ctx.lineTo(-8, -8);
+            ctx.fill();
+            ctx.restore();
+            ctx.shadowBlur = 0;
+        }
+    </script>
+</body>
+</html>
