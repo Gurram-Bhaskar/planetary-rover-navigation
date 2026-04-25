@@ -56,6 +56,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PATH=/install/bin:$PATH \
     # Add the /install prefix to the module search path
     PYTHONPATH=/install/lib/python3.12/site-packages
 
@@ -90,4 +91,4 @@ EXPOSE 7860
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/tasks')"
 
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 7860 & sleep 10 && python train.py"]
+CMD ["sh", "-c", "python -m uvicorn main:app --host 0.0.0.0 --port 7860 & sleep 10 && python train.py"]
