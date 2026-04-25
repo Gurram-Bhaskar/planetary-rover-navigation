@@ -56,7 +56,7 @@ SEED            = 42
 
 # Cloud GPU parameters (HF Spaces — migrated from local 6 GB)
 MAX_SEQ_LENGTH  = 512          # prompt + completion combined
-LORA_RANK       = 4
+LORA_RANK       = 16
 LORA_ALPHA      = 32
 LORA_DROPOUT    = 0.0
 
