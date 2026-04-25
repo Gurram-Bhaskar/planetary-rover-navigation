@@ -73,6 +73,7 @@ NUM_TRAIN_EPOCHS     = 2
 PER_DEVICE_BATCH     = 1       # keep at 1 for 6 GB
 GRAD_ACCUM_STEPS     = int(os.getenv("ROVER_GRAD_ACCUM_STEPS", "8"))
 WARMUP_STEPS         = int(os.getenv("ROVER_WARMUP_STEPS", "10"))
+USE_BF16             = os.getenv("ROVER_USE_BF16", "0") == "1"
 
 # Reward tuning
 FORMAT_REWARD_GOOD   = 1.0
@@ -457,7 +458,8 @@ def load_model():
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name     = MODEL_NAME,
         max_seq_length = MAX_SEQ_LENGTH,
-        dtype          = None,          # auto-detect (float16 on Ampere)
+        # Use a fixed dtype to avoid mixed precision mismatches in LoRA kernels.
+        dtype          = torch.bfloat16 if USE_BF16 else torch.float16,
         load_in_4bit   = True,          # NF4 quantisation for 6 GB VRAM
     )
 
@@ -496,6 +498,9 @@ def load_model():
 
 def build_training_config() -> GRPOConfig:
     """Build the GRPOConfig with parameters safe for 6 GB VRAM."""
+    # Keep trainer precision aligned with model dtype.
+    use_bf16 = USE_BF16
+
     return GRPOConfig(
         output_dir             = OUTPUT_DIR,
 
@@ -518,8 +523,8 @@ def build_training_config() -> GRPOConfig:
         num_train_epochs            = NUM_TRAIN_EPOCHS,
 
         # ── Precision / memory ────────────────────────────────────────
-        bf16                   = torch.cuda.is_bf16_supported(),
-        fp16                   = not torch.cuda.is_bf16_supported(),
+        bf16                   = use_bf16,
+        fp16                   = not use_bf16,
 
         # ── Logging / saving ──────────────────────────────────────────
         logging_steps          = 1,
@@ -543,6 +548,7 @@ def main() -> None:
     log.info("Model : %s", MODEL_NAME)
     log.info("VRAM  : 24 GB+ cloud GPU (4-bit NF4, LoRA r=%d, group=%d)",
              LORA_RANK, NUM_GENERATIONS)
+    log.info("Precision: %s", "bf16" if USE_BF16 else "fp16")
     log.info("=" * 60)
 
     # ── 0. Check server ───────────────────────────────────────────────
