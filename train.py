@@ -54,9 +54,9 @@ SERVER_URL      = "http://0.0.0.0:7860"
 OUTPUT_DIR      = "./grpo_rover_checkpoints"
 SEED            = 42
 
-# VRAM-safe parameters for RTX 3050 (6 GB)
+# Cloud GPU parameters (HF Spaces — migrated from local 6 GB)
 MAX_SEQ_LENGTH  = 512          # prompt + completion combined
-LORA_RANK       = 16
+LORA_RANK       = 4
 LORA_ALPHA      = 32
 LORA_DROPOUT    = 0.0
 
@@ -64,7 +64,7 @@ LORA_DROPOUT    = 0.0
 NUM_TRAIN_EPISODES   = 150     # prompts per task × 3 tasks = total dataset
 MAX_PROMPT_LENGTH    = 256
 MAX_COMPLETION_LENGTH = 256
-NUM_GENERATIONS      = 4       # GRPO group size — critical for 6 GB
+NUM_GENERATIONS      = 16      # GRPO group size — 16 trajectories on 24 GB+ cloud GPU
 LEARNING_RATE        = 1e-6
 KL_COEF              = 0.04    # β for KL penalty
 NUM_TRAIN_EPOCHS     = 2
@@ -460,7 +460,7 @@ def main() -> None:
     log.info("=" * 60)
     log.info("GRPO Training — Planetary Rover Navigation")
     log.info("Model : %s", MODEL_NAME)
-    log.info("VRAM  : 6 GB target (4-bit NF4, LoRA r=%d, group=%d)",
+    log.info("VRAM  : 24 GB+ cloud GPU (4-bit NF4, LoRA r=%d, group=%d)",
              LORA_RANK, NUM_GENERATIONS)
     log.info("=" * 60)
 
@@ -471,8 +471,8 @@ def main() -> None:
     model, tokenizer = load_model()
 
     # ── 2. Generate training dataset ──────────────────────────────────
-    log.info("Generating quick smoke-test dataset from physics engine...")
-    train_dataset = generate_training_dataset(n_per_task=2)
+    log.info("Generating full training dataset from physics engine...")
+    train_dataset = generate_training_dataset()
 
     # ── 3. Build GRPO config ──────────────────────────────────────────
     config = build_training_config()
@@ -502,11 +502,11 @@ def main() -> None:
 
     # ── 7. VRAM summary ──────────────────────────────────────────────
     peak_vram = torch.cuda.max_memory_allocated() / 1e9
-    log.info("Peak VRAM usage: %.2f GB (limit: 6.00 GB)", peak_vram)
-    if peak_vram > 6.0:
-        log.warning("⚠ Peak VRAM exceeded 6 GB! Reduce NUM_GENERATIONS or LORA_RANK.")
+    log.info("Peak VRAM usage: %.2f GB", peak_vram)
+    if peak_vram > 24.0:
+        log.warning("⚠ Peak VRAM exceeded 24 GB! Reduce NUM_GENERATIONS or LORA_RANK.")
     else:
-        log.info("✅ VRAM stayed within 6 GB budget.")
+        log.info("✅ VRAM within cloud GPU budget.")
 
 
 if __name__ == "__main__":

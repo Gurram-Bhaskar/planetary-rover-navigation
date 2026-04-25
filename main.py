@@ -1415,22 +1415,6 @@ app = FastAPI(
 )
 
 
-# ── Live Visualization Dashboard ───────────────────────────────────────────
-from fastapi.responses import HTMLResponse
-import os
-
-_INDEX_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
-
-@app.get("/", response_class=HTMLResponse, tags=["Dashboard"])
-async def serve_radar_gui():
-    """Serve the live rover telemetry radar dashboard."""
-    try:
-        with open(_INDEX_HTML_PATH, "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        return "<h1>Error: index.html not found.</h1>"
-
-
 # Action schema is identical across all tasks — defined once, attached to every TaskMeta.
 # Describes every field in the Action model: type, bounds, and semantics.
 _ACTION_SCHEMA: dict[str, Any] = {
