@@ -441,7 +441,7 @@ def build_training_config() -> GRPOConfig:
         fp16                   = not torch.cuda.is_bf16_supported(),
 
         # ── Logging / saving ──────────────────────────────────────────
-        logging_steps          = 5,
+        logging_steps          = 1,
         save_steps             = 50,
         save_total_limit       = 3,
         report_to              = "none",               # set to "wandb" if desired
@@ -471,18 +471,8 @@ def main() -> None:
     model, tokenizer = load_model()
 
     # ── 2. Generate training dataset ──────────────────────────────────
-    SYSTEM_PROMPT = """You are an autonomous planetary rover. Navigate to the target.
-Output strictly valid JSON inside <action> tags with 'thrust' (0.0 to 1.0) and 'steering' (-1.0 to 1.0)."""
-
-    practice_prompts = {
-        "prompt": [
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": "Telemetry linked. Generate initial navigation action."}
-            ]
-        ] * 100
-    }
-    train_dataset = Dataset.from_dict(practice_prompts)
+    log.info("Generating quick smoke-test dataset from physics engine...")
+    train_dataset = generate_training_dataset(n_per_task=2)
 
     # ── 3. Build GRPO config ──────────────────────────────────────────
     config = build_training_config()
