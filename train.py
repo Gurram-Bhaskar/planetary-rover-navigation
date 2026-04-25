@@ -33,6 +33,7 @@ import sys
 import time
 import random
 import logging
+from numbers import Real
 from typing import Any
 
 import requests
@@ -44,13 +45,14 @@ from datasets import Dataset
 # ---------------------------------------------------------------------------
 from unsloth import FastLanguageModel
 from trl import GRPOConfig, GRPOTrainer
+from transformers import TrainerCallback
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 MODEL_NAME      = "meta-llama/Llama-3.2-1B-Instruct"
-SERVER_URL      = "http://0.0.0.0:7860"
+SERVER_URL      = os.getenv("ROVER_SERVER_URL", "http://127.0.0.1:7860")
 OUTPUT_DIR      = "./grpo_rover_checkpoints"
 SEED            = 42
 
@@ -64,7 +66,7 @@ LORA_DROPOUT    = 0.0
 NUM_TRAIN_EPISODES   = 150     # prompts per task × 3 tasks = total dataset
 MAX_PROMPT_LENGTH    = 256
 MAX_COMPLETION_LENGTH = 256
-NUM_GENERATIONS      = 16      # GRPO group size — 16 trajectories on 24 GB+ cloud GPU
+NUM_GENERATIONS      = int(os.getenv("ROVER_NUM_GENERATIONS", "8"))
 LEARNING_RATE        = 1e-6
 KL_COEF              = 0.04    # β for KL penalty
 NUM_TRAIN_EPOCHS     = 2
@@ -80,6 +82,54 @@ VERBOSITY_PENALTY_K  = 200     # excess tokens before reward → 0
 # Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("train")
+
+
+def _extract_scalar_reward(logs: dict[str, Any]) -> float | None:
+    """Return one scalar reward value from a TRL/Trainer log payload."""
+    raw_reward = logs.get("reward")
+    if isinstance(raw_reward, Real):
+        return float(raw_reward)
+
+    reward_terms: list[float] = []
+    for key, value in logs.items():
+        key_lower = key.lower()
+        if "reward" not in key_lower:
+            continue
+        if any(skip in key_lower for skip in ("std", "min", "max", "var")):
+            continue
+        if isinstance(value, Real):
+            reward_terms.append(float(value))
+
+    if not reward_terms:
+        return None
+
+    return sum(reward_terms) / len(reward_terms)
+
+
+class CompactMetricsCallback(TrainerCallback):
+    """Emit a concise log line to simplify screenshot capture in Spaces logs."""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not logs:
+            return control
+
+        loss = logs.get("loss")
+        if not isinstance(loss, Real):
+            return control
+
+        metrics: dict[str, float] = {"loss": float(loss)}
+
+        reward = _extract_scalar_reward(logs)
+        if reward is not None:
+            metrics["reward"] = reward
+
+        learning_rate = logs.get("learning_rate")
+        if isinstance(learning_rate, Real):
+            metrics["lr"] = float(learning_rate)
+
+        compact = {key: round(value, 6) for key, value in metrics.items()}
+        log.info("METRICS %s", compact)
+        return control
 
 
 # =============================================================================
@@ -486,6 +536,7 @@ def main() -> None:
         args         = config,
         train_dataset = train_dataset,
     )
+    trainer.add_callback(CompactMetricsCallback())
 
     # ── 5. Train ──────────────────────────────────────────────────────
     log.info("Starting GRPO training…")
