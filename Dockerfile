@@ -80,6 +80,7 @@ COPY --from=builder /install /install
 # Copy application source last — maximises cache reuse for code iterations.
 # Only the files the server actually needs at runtime:
 COPY main.py        ./main.py
+COPY index.html     ./index.html
 COPY inference.py    ./inference.py
 COPY train.py        ./train.py
 COPY openenv.yaml   ./openenv.yaml

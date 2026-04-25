@@ -29,12 +29,14 @@ from __future__ import annotations
 import math
 import random
 import uuid
+from pathlib import Path
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 # =============================================================================
@@ -1413,6 +1415,16 @@ app = FastAPI(
     description="OpenEnv-compliant RL environment — Meta PyTorch Hackathon Round 1",
     version="1.0.0",
 )
+
+_INDEX_HTML_PATH = Path(__file__).resolve().parent / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def ui() -> FileResponse:
+    """Serve the dashboard UI from the repository root."""
+    if not _INDEX_HTML_PATH.exists():
+        raise HTTPException(404, "index.html not found in application directory.")
+    return FileResponse(_INDEX_HTML_PATH)
 
 
 # Action schema is identical across all tasks — defined once, attached to every TaskMeta.
