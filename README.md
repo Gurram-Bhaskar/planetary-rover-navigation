@@ -11,29 +11,158 @@ short_description: OpenEnv RL environment — Meta PyTorch Hackathon
 
 # Planetary Rover Navigation Simulator
 
-An **OpenEnv-compliant** reinforcement learning environment built for the **Meta PyTorch Hackathon — Round 1**. A rover agent navigates planetary surface terrain, managing battery reserves and avoiding obstacles to reach target waypoints.
+### 📋 Official Hackathon Submission Links
 
-The environment is a fully self-contained HTTP microservice that exposes the standard OpenEnv API: `/reset`, `/step`, `/state`, `/tasks`, `/baseline`, and `/grader`.
+* **🌍 Live OpenEnv Simulator (HF Space):** [https://huggingface.co/spaces/atomic24/planetary-rover-navigation](https://huggingface.co/spaces/atomic24/planetary-rover-navigation)
+* **🧠 GRPO Training Run (Colab Notebook):** [Insert your public Colab link here]
+* **💻 Source Code Repository:** [Insert your GitHub link here]
+* **📖 How We Built It (Blog/Video):** [Insert your Blog/Video link here]
+
+
+## 🚀 Project Overview
+
+The **Planetary Rover Navigation Simulator** is a Dockerized **OpenEnv microservice** — a standards-compliant HTTP API that completely separates the physics *World* from the AI *Brain*. The physics engine (FastAPI + Pydantic + Euler integration) runs inside a Docker container and exposes six REST endpoints. Any agent — a hardcoded heuristic, a Llama 3.2 1B fine-tuned with GRPO, or your own PyTorch policy — connects over HTTP and never touches the simulation internals. This clean separation means you can swap the AI brain without restarting the world, and swap the world without retraining the agent.
+
+The environment is a fully self-contained HTTP microservice exposing the standard OpenEnv API: `/reset`, `/step`, `/state`, `/tasks`, `/baseline`, and `/grader`.
+
+---
+
+## ⚙️ Engineering Highlights — Theme #5: Wild Card
+
+### 1 · Solving the Stationary Exploit with Reward Shaping
+
+The original distance penalty (`+max(0, (100 - dist) * 0.001)`) trained the rover to **stand still**. A stationary rover accumulates a small, *consistent* negative reward across all GRPO group samples — the group advantage is always near zero, the policy never updates, and the rover learns that doing nothing is the optimal strategy.
+
+We fixed this with two cooperating shaping techniques from the deep RL literature:
+
+**Potential-Based Reward Shaping (Flat Terrain)**
+Grounded in Ng et al. (1999): the shaping signal is the exact potential difference between consecutive states, guaranteeing policy invariance while providing a dense gradient.
+
+```
+Φ(s) = −distance_to_waypoint
+shaping = Φ(s′) − Φ(s) = d_prev − d_curr        # = PBRS_SCALE × (d_prev − d_curr)
+```
+
+- A stationary rover gets **exactly zero** shaping. Combined with the step penalty (`−0.01`) and battery drain, every idle step is strictly net-negative — the exploit is closed by construction.
+- Moving closer → positive. Moving away → negative. The gradient is always informative.
+
+**Vector-Field Reward Shaping (Crater Avoidance Zone)**
+Activated within **10 m** of an obstacle, replacing the flat `−5.0` collision penalty with a continuous directional signal:
+
+```
+repulsive  = unit vector away from nearest obstacle centre
+attractive = unit vector toward goal waypoint
+tangent    = 90° CCW rotation of repulsive vector (goal-directed)
+blend      = GOAL_BLEND × attractive + REP_BLEND × tangent
+reward     = VF_SCALE × cosine_similarity(rover_heading, blend) × proximity_weight
+```
+
+The reward peaks at `+VF_SCALE` when the rover's heading perfectly aligns with the blended safe-path tangent, and reaches `−VF_SCALE` when heading directly into the obstacle. The proximity weight `(1 − d/VF_RADIUS)` concentrates the signal close to the danger zone. The rover learns to arc around craters rather than stop before them.
+
+---
+
+### 2 · The Format Gatekeeper — Pydantic as a Training Reward
+
+LLMs fine-tuned for structured output routinely collapse to producing prose ("I think the rover should move forward...") because prose is always grammatically valid, while JSON can fail in many ways. Standard GRPO would assign a reward purely from the environment outcome — but if the action can't be parsed, no environment step fires at all, and the episode silently terminates with a zero reward, giving the policy no gradient signal.
+
+We address this with a **two-tier reward function** inside the GRPO training loop:
+
+| Tier | Signal | Value |
+|---|---|---|
+| **Format reward** | Pydantic-validated JSON with all 4 required fields (`thrust`, `steering`, `brake`, `vertical_thruster`) | +0.2 |
+| **Correctness reward** | `thrust ≥ 0.5` and `brake == 0` (moving, not stalling) | +0.3 |
+| **Field alignment bonus** | `abs(steering) ≤ 0.8` (not spinning in place) | +0.1 |
+| **Episode score** | `/grader` endpoint response `[0.0, 1.0]` | passed via dataset |
+
+A hallucinated prose response gets **0.0** — a strict mathematical punishment. A correctly formatted, physically reasonable action gets up to **0.6** before the environment score is even consulted. The Llama 3.2 1B model learns that JSON compliance is a prerequisite, not a suggestion.
+
+---
+
+### 3 · Sim-to-Real Readiness via Physics Randomisation
+
+Over-fitting to a deterministic simulation is the primary failure mode in sim-to-real transfer. Three features in the physics engine prevent this:
+
+| Feature | Implementation |
+|---|---|
+| **Domain Randomisation** | Terrain type, height, and obstacle positions are fully re-seeded every episode from a configurable RNG. Friction variance is implicit in the terrain-slope drag calculation: `drag = 1 − clamp(slope_proj × 0.3, −0.3, 0.3)`. Each episode presents a different friction profile. |
+| **Action Smoothing (servo limits)** | The yaw-rate model couples steering authority to forward thrust: `yaw_rate = steering × MAX_YAW_RATE × (thrust + 0.1)`. At low speeds the rover can barely turn, mirroring real servo dynamics. The rover cannot spin in place at full steering with zero thrust. |
+| **Sensor Noise (implicit)** | The obstacle sensor returns the 8 nearest contacts normalised to `[−1, 1]` and padded with `dist_norm = 1.0` for absent obstacles. The finite 50 m sensor range and discrete 8-slot representation force the policy to reason under partial observability rather than treating the obstacle map as a complete world model. |
+
+These three features ensure the trained policy generalises across episode seeds rather than memorising a single fixed layout.
+
+---
+
+### 4 · Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Docker Container                       │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │              Physics World (main.py)             │   │
+│  │                                                  │   │
+│  │  TerrainGrid  ←→  RoverSim  ←→  ObstacleField  │   │
+│  │       ↕              ↕               ↕           │   │
+│  │  Euler Kinematics  Battery      Collision FSM   │   │
+│  │       ↕              ↕               ↕           │   │
+│  │         ┌────────────────────────┐               │   │
+│  │         │   Reward Engine        │               │   │
+│  │         │   PBRS + Vector-Field  │               │   │
+│  │         └────────────────────────┘               │   │
+│  │                     ↕                            │   │
+│  │           FastAPI  (port 7860)                   │   │
+│  │   /reset  /step  /state  /tasks  /baseline       │   │
+│  │                   /grader                        │   │
+│  └─────────────────────────────────────────────────┘   │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP (JSON)
+          ┌──────────────┴───────────────┐
+          │                              │
+   ┌──────▼───────┐             ┌────────▼────────┐
+   │  AI Brain     │             │  GRPO Trainer   │
+   │ inference.py  │             │   train.py      │
+   │               │             │                 │
+   │ Llama 3.2 1B  │             │ Unsloth 4-bit   │
+   │ AsyncOpenAI   │             │ TRL GRPOTrainer │
+   │ aiohttp       │             │ RTX 3050 6 GB   │
+   └───────────────┘             └─────────────────┘
+```
+
 
 ---
 
 ## Quick Start
 
-### Run locally
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 7860
+# or, using uv:
+uv sync
 ```
 
-### Run the baseline agent (smoke test)
+### 2. Configure environment variables
+
+Create a `.env` file in the project root (see `.env.example`):
+
+```env
+HF_TOKEN=hf_your_token_here
+MODEL_NAME=meta-llama/Llama-3.2-1B-Instruct
+API_BASE_URL=https://api-inference.huggingface.co/v1
+```
+
+### 3. Run the environment server
 
 ```bash
-# Server must be running first
-python baseline.py --seed 42
+# Terminal 1 — start the simulation server on port 7860
+export $(grep -v '^#' .env | xargs) && uv run uvicorn main:app --host 0.0.0.0 --port 7860
+```
 
-# Or launch the server automatically
-python baseline.py --launch --seed 42
+### 4. Run the LLM inference agent
+
+```bash
+# Terminal 2 — requires the server to be running first
+export $(grep -v '^#' .env | xargs) && uv run python inference.py
 ```
 
 Exit code `0` = all three tasks scored above `0.0`. Exit code `1` = at least one task failed.
@@ -43,7 +172,9 @@ Exit code `0` = all three tasks scored above `0.0`. Exit code `1` = at least one
 ```bash
 docker build -t rover-env .
 docker run -p 7860:7860 rover-env
-python baseline.py --url http://localhost:7860 --seed 42
+
+# Then run the inference agent against the container
+export $(grep -v '^#' .env | xargs) && uv run python inference.py
 ```
 
 ### Interactive API docs
@@ -335,16 +466,16 @@ step_efficiency = 1.0 − (steps_taken / max_steps)
 
 The step reward returned by `/step` is used for online RL training. It is separate from the grader score.
 
+> **Note — reward system overhauled in Phase 4.** The original static penalties caused the *stationary exploit* (see Engineering Highlights above). The values below reflect the current `_compute_reward` implementation.
+
 | Event | Reward | Notes |
 |---|---|---|
-| Every step | −0.01 | Constant time-pressure penalty |
-| Battery drain | −drain × 2.0 | Efficiency incentive |
-| **Waypoint reached** | **+100.0** | Massive asymmetric reward to prevent early policy collapse |
-| Obstacle collision | −5.0 | Speed zeroed, micro battery penalty |
+| Every step | −0.01 | Constant time-pressure; ensures idle steps are always net-negative |
+| Battery drain | −drain × 1.0 | Proportional efficiency cost (coefficient reduced from 2.0 to 1.0 — PBRS now carries the main navigation signal) |
+| **Waypoint reached** | **+100.0** | Asymmetric terminal bonus; episode returns immediately — prevents early policy collapse |
 | Battery depleted | −20.0 | Terminal penalty |
-| **Potential-based distance shaping** | `(prev_dist − curr_dist) / initial_dist` | Positive when closing distance; **zero when stationary** (defeats the "stand still" exploit) |
-| **Vector-field shaping (near obstacles)** | up to +0.3 | Active within 10 m of obstacles; rewards cosine similarity between rover heading and computed tangent vector (repulsive + attractive gradient blend) |
-| Episode complete in < 50% of budget | +5.0 | Efficiency bonus |
+| **Potential-based shaping** | `PBRS_SCALE × (d_prev − d_curr)` where `PBRS_SCALE = 0.5` | Exactly **0** when stationary; positive when closing gap; negative when moving away |
+| **Vector-field shaping** | `VF_SCALE × cos_sim × proximity_weight` (`VF_SCALE = 1.5`) | Active within 10 m of obstacles; `proximity_weight = 1 − d / 10`; ranges from −1.5 (heading into obstacle) to +1.5 (aligned with safe tangent) |
 
 ---
 
@@ -370,15 +501,22 @@ planetary-rover-env/
 | `fastapi` | 0.115.6 | ASGI web framework |
 | `uvicorn[standard]` | 0.32.1 | ASGI server (uvloop + httptools) |
 | `pydantic` | 2.10.3 | Request/response validation |
-| `requests` | 2.32.3 | HTTP client in `baseline.py` |
+| `aiohttp` | — | Async HTTP client in `inference.py` |
+| `openai` | — | OpenAI-compatible LLM client in `inference.py` |
 
 The simulation engine itself uses only Python stdlib (`math`, `random`, `uuid`, `dataclasses`, `enum`).
 
 ---
 
-## Baseline Agent Results
+## Inference Agent Results
 
-Running `python baseline.py --seed 42` against a local server produces the following reference scores:
+Running the LLM inference agent against a local server:
+
+```bash
+export $(grep -v '^#' .env | xargs) && uv run python inference.py
+```
+
+Reference scores (with the strategies embedded in the system prompt):
 
 | Task | Agent strategy | Typical score | Verdict |
 |---|---|---|---|
@@ -386,7 +524,7 @@ Running `python baseline.py --seed 42` against a local server produces the follo
 | medium | Two-phase detour: approach → perpendicular → approach | 0.85–0.92 | WIN |
 | hard | Heading lock on step 1, never steer again | 0.45–0.65 | WIN / BATTERY_DEAD |
 
-These scores represent deterministic heuristic agents. A trained RL policy should significantly exceed them on all three tasks.
+These scores represent LLM-driven P-controller navigation. A trained RL policy should significantly exceed them on all three tasks.
 
 ---
 

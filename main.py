@@ -570,6 +570,15 @@ class RoverSim:
     # Reward-shaping state — tracks distance at previous step for potential-based shaping
     _prev_distance:   float = 0.0   # set equal to initial_distance at reset
 
+    # ── Sim-to-Real: Domain Randomization (Feature 1) ──────────────────
+    # Random per-episode modifier applied to speed in _apply_kinematics.
+    # Simulates varying terrain friction / gravity each episode.
+    physics_modifier: float = 1.0
+
+    # ── Sim-to-Real: Servo Rate Limiting (Feature 2) ───────────────────
+    # Tracks last step's steering so we can clamp Δsteering ≤ 0.5/step.
+    previous_steering: float = 0.0
+
     # -------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------
@@ -616,7 +625,10 @@ class RoverSim:
         sx, sy = self.terrain.slope(self.px, self.py)
         slope_proj = sx * math.cos(self.heading) + sy * math.sin(self.heading)
         drag = 1.0 - self._clamp(slope_proj * 0.3, -0.3, 0.3)
-        self.speed = self._clamp(target_speed * drag, 0.0, MAX_SPEED)
+        # ── Sim-to-Real: Domain Randomization (Feature 1) ──────────────
+        # Apply per-episode physics_modifier to simulate terrain friction
+        # variation.  Ground-truth physics uses the modified speed.
+        self.speed = self._clamp(target_speed * drag * self.physics_modifier, 0.0, MAX_SPEED)
 
         # Position update with world clamping
         self.px = self._clamp(self.px + self.speed * math.cos(self.heading) * DT,
@@ -835,8 +847,14 @@ class RoverSim:
         current_drain = (DRAIN_BASE + DRAIN_TERRAIN.get(t_type, 0.0)) * self.drain_mult
         waypts_rem    = len(self.waypoint_list) - self.waypoints_hit
 
+        # ── Sim-to-Real: Sensor Noise (Feature 3) ──────────────────────
+        # Inject Gaussian noise into REPORTED position only.  Ground-truth
+        # self.px / self.py remain untouched for physics & reward.
+        noisy_x = self.px + random.gauss(0.0, 0.1)
+        noisy_y = self.py + random.gauss(0.0, 0.1)
+
         return Observation(
-            rover_position            = Vec3(x=self.px, y=self.py, z=t_height),
+            rover_position            = Vec3(x=noisy_x, y=noisy_y, z=t_height),
             rover_heading             = self.heading,
             rover_velocity            = Vec3(
                 x=self.speed * math.cos(self.heading),
@@ -882,11 +900,31 @@ class RoverSim:
 
         self.steps += 1
 
+        # ── Sim-to-Real: Servo Rate Limiting (Feature 2) ───────────────
+        # Clamp steering delta to ±0.5 per step so the LLM cannot command
+        # instantaneous full-lock turns (mimics real servo slew rate).
+        max_delta = 0.5
+        clamped_steering = self._clamp(
+            action.steering,
+            self.previous_steering - max_delta,
+            self.previous_steering + max_delta,
+        )
+        # Build a rate-limited copy of the action for kinematics
+        action = Action(
+            thrust=action.thrust,
+            steering=clamped_steering,
+            brake=action.brake,
+            vertical_thruster=action.vertical_thruster,
+        )
+
         # Snapshot distance BEFORE kinematics so potential-based shaping
         # can compute Δd = prev_dist − curr_dist for this step.
         prev_dist = self._prev_distance
 
         self._apply_kinematics(action)
+
+        # Update previous_steering AFTER kinematics for next step's clamp
+        self.previous_steering = clamped_steering
         drain        = self._update_battery(action)
         collided, nd = self._check_collision()
         wp_hit       = self._check_waypoints()
@@ -1015,6 +1053,11 @@ def _make_sim(task_id: str, seed: int | None) -> RoverSim:
     # ------------------------------------------------------------------
     initial_dist = math.hypot(waypoints[0][0], waypoints[0][1])
 
+    # ── Sim-to-Real: Domain Randomization (Feature 1) ──────────────────
+    # Each episode gets a random physics modifier ∈ [0.9, 1.1] that
+    # slightly scales speed, simulating terrain friction / gravity jitter.
+    physics_mod = rng.uniform(0.9, 1.1)
+
     return RoverSim(
         task_id=task_id,
         max_steps=cfg["max_steps"],
@@ -1029,6 +1072,8 @@ def _make_sim(task_id: str, seed: int | None) -> RoverSim:
         min_distance=initial_dist,
         _prev_distance=initial_dist,
         collision_count=0,
+        physics_modifier=physics_mod,       # Feature 1: domain randomization
+        previous_steering=0.0,              # Feature 2: servo rate limiter init
     )
 
 
