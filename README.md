@@ -31,7 +31,7 @@ The environment is a fully self-contained HTTP microservice exposing the standar
 
 ### 1 · Solving the Stationary Exploit with Reward Shaping
 
-The original distance penalty (`+max(0, (100 - dist) * 0.001)`) trained the rover to **stand still**. A stationary rover accumulates a small, *consistent* negative reward across all GRPO group samples — the group advantage is always near zero, the policy never updates, and the rover learns that doing nothing is the optimal strategy.
+Traditional sparse rewards (only rewarding upon waypoint arrival) provide no gradient signal for intermediate steps, while our original dense distance penalty (`+max(0, (100 - dist) * 0.001)`) inadvertently trained the rover to **stand still** (the Stationary Exploit). A stationary rover accumulates a small, *consistent* negative reward across all GRPO group samples — the group advantage is always near zero, the policy never updates, and the rover learns that doing nothing is the optimal strategy.
 
 We fixed this with two cooperating shaping techniques from the deep RL literature:
 
@@ -124,10 +124,20 @@ These three features ensure the trained policy generalises across episode seeds 
    │               │             │                 │
    │ Llama 3.2 1B  │             │ Unsloth 4-bit   │
    │ AsyncOpenAI   │             │ TRL GRPOTrainer │
-   │ aiohttp       │             │ RTX 3050 6 GB   │
+   │ aiohttp       │             │ 24GB Cloud GPU  │
    └───────────────┘             └─────────────────┘
 ```
 
+
+By migrating our final training pipeline to a 24GB Cloud GPU, we scaled our GRPO rollouts to run multiple environment trajectories simultaneously, maximizing throughput and VRAM utilization.
+
+---
+
+### 5 · Evidence of Training
+
+![GRPO Training Logs](docs/grpo_training_logs.png)
+
+This screenshot proves our policy's progression: the format reward rapidly climbs from 0.0 to a consistent positive value as the model learns to output strictly valid Pydantic JSON. Once the format is mastered, the environment reward stabilizes as the rover learns Vector-Field navigation.
 
 ---
 

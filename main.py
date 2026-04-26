@@ -1512,6 +1512,16 @@ def get_tasks() -> list[TaskMeta]:
     return tasks
 
 
+@app.get("/latest_episode", tags=["OpenEnv"])
+def latest_episode() -> dict[str, str | None]:
+    """
+    Return the most recently created episode_id, or None if none exist.
+    Used by the frontend to automatically sync with a running training script.
+    """
+    keys = list(_store._sims.keys())
+    return {"episode_id": keys[-1] if keys else None}
+
+
 @app.post("/reset", response_model=ResetResponse, tags=["OpenEnv"])
 def reset(req: ResetRequest | None = None) -> ResetResponse:
     """
