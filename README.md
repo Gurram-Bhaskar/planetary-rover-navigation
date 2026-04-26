@@ -141,6 +141,14 @@ This screenshot proves our policy's progression: the format reward rapidly climb
 
 ---
 
+### 6 · Judge Dashboard Mission Control
+
+The `index.html` frontend has been completely rewritten into a premium "Mission Control" dashboard to provide a zero-friction experience for evaluation:
+- **Live Training Viewer (Auto-Sync)**: The UI automatically polls the new `/latest_episode` backend endpoint. The moment a training script calls `/reset`, the UI seamlessly syncs to the new UUID and streams `/state` telemetry at 100ms intervals. No manual ID copying required.
+- **Interactive Judge Demo**: Evaluators can select a task difficulty from the dropdown and click "Launch Mission" to manually drive the rover using their keyboard Arrow Keys. The UI runs a 150ms game loop, mapping keys to the `thrust`, `brake`, and `steering` fields of the `/step` endpoint, allowing judges to physically experience the physics constraints, domain randomization, and battery penalty logic.
+
+---
+
 ## Quick Start
 
 ### 1. Install dependencies
