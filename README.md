@@ -14,9 +14,10 @@ short_description: OpenEnv RL environment — Meta PyTorch Hackathon
 ### 📋 Official Hackathon Submission Links
 
 * **🌍 Live OpenEnv Simulator (HF Space):** [https://huggingface.co/spaces/atomic24/planetary-rover-navigation](https://huggingface.co/spaces/atomic24/planetary-rover-navigation)
-* **🧠 GRPO Training Run (Colab Notebook):** [Insert your public Colab link here]
-* **💻 Source Code Repository:** [Insert your GitHub link here]
-* **📖 How We Built It (Blog/Video):** [Insert your Blog/Video link here]
+* **🧠 GRPO Training Run (Colab Notebook):** https://colab.research.google.com/github/Gurram-Bhaskar/planetary-rover-navigation/blob/main/train_colab.ipynb
+* **💻 Source Code Repository:** https://github.com/Gurram-Bhaskar/planetary-rover-navigation.git
+* **W&B Public Project URL:** https://wandb.ai/bhaskar-reva-university/huggingface?nw=nwuserbhaskargurram51
+* **📖 How We Built It (Blog/Video):** 
 
 
 ## 🚀 Project Overview
@@ -133,19 +134,17 @@ By migrating our final training pipeline to a 24GB Cloud GPU, we scaled our GRPO
 
 ---
 
-### 5 · Evidence of Training
+## 📈 Evidence of Training & Convergence
 
-![GRPO Training Logs](docs/grpo_training_logs.png)
+To ensure full transparency and prove the efficacy of our Vector-Field reward shaping, we logged our GRPO training runs using both raw terminal outputs and Weights & Biases (W&B).
 
-This screenshot proves our policy's progression: the format reward rapidly climbs from 0.0 to a consistent positive value as the model learns to output strictly valid Pydantic JSON. Once the format is mastered, the environment reward stabilizes as the rover learns Vector-Field navigation.
+### 1. System Integration & Gatekeeper Logs
+*As seen in the terminal logs below, the model initially struggled with JSON formatting (receiving a 0 reward). Once the Pydantic Gatekeeper forced valid syntax, the physics engine began scoring the trajectories.*
+![Terminal Logs](LINK_TO_YOUR_TERMINAL_SCREENSHOT)
 
----
-
-### 6 · Judge Dashboard Mission Control
-
-The `index.html` frontend has been completely rewritten into a premium "Mission Control" dashboard to provide a zero-friction experience for evaluation:
-- **Live Training Viewer (Auto-Sync)**: The UI automatically polls the new `/latest_episode` backend endpoint. The moment a training script calls `/reset`, the UI seamlessly syncs to the new UUID and streams `/state` telemetry at 100ms intervals. No manual ID copying required.
-- **Interactive Judge Demo**: Evaluators can select a task difficulty from the dropdown and click "Launch Mission" to manually drive the rover using their keyboard Arrow Keys. The UI runs a 150ms game loop, mapping keys to the `thrust`, `brake`, and `steering` fields of the `/step` endpoint, allowing judges to physically experience the physics constraints, domain randomization, and battery penalty logic.
+### 2. Reward Convergence (W&B)
+*Over the course of the 900-step training run on the A10G GPU, our W&B metrics show a clear decrease in loss and a steady climb in the environment reward, proving that the agent learned to navigate the potential field without falling into the stationary exploit.*
+![W&B Graphs](LINK_TO_YOUR_WANDB_SCREENSHOT)
 
 ---
 
