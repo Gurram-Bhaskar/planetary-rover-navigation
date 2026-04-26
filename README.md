@@ -136,15 +136,30 @@ By migrating our final training pipeline to a 24GB Cloud GPU, we scaled our GRPO
 
 ## 📈 Evidence of Training & Convergence
 
-To ensure full transparency and prove the efficacy of our Vector-Field reward shaping, we logged our GRPO training runs using both raw terminal outputs and Weights & Biases (W&B).
+### Sub-Section 1: Training Results & Analysis
 
-### 1. System Integration & Gatekeeper Logs
-*As seen in the terminal logs below, the model initially struggled with JSON formatting (receiving a 0 reward). Once the Pydantic Gatekeeper forced valid syntax, the physics engine began scoring the trajectories.*
-![Terminal Logs](LINK_TO_YOUR_TERMINAL_SCREENSHOT)
+![Training Loss](./images/loss.png)
+*Figure 1: Policy Update Magnitude (Loss). The curve exhibits a definitive 'Discovery Spike' at Step 160, marking the transition from random exploration to the policy identifying structured reward patterns.*
 
-### 2. Reward Convergence (W&B)
-*Over the course of the 900-step training run on the A10G GPU, our W&B metrics show a clear decrease in loss and a steady climb in the environment reward, proving that the agent learned to navigate the potential field without falling into the stationary exploit.*
-![W&B Graphs](LINK_TO_YOUR_WANDB_SCREENSHOT)
+![Reward Evolution](./images/reward.png)
+*Figure 2: Reward Breakdown. Top-Left (Format Reward): Shows the Pydantic Gatekeeper successfully training the model to a 1.0 plateau (100% compliance). Top-Right (Environment Reward): Shows the subsequent upward trend in navigation proficiency.*
+
+![System Logs 1](./images/training_logs1.png)
+![System Logs 2](./images/training_logs2.png)
+![System Logs 3](./images/training_logs3.png)
+*Figure 3: Real-time System Integration Logs. Verifying the internal communication between the Llama 3.2 policy and the FastAPI physics engine, confirming zero-error action parsing during the final training iterations.*
+
+### Sub-Section 2: The Learning Journey
+
+Our agent followed a strict two-phase learning curriculum required for continuous physics environments. First, it mastered 'Communication'—learning to strictly adhere to the Pydantic JSON schema. Once format-perfect, it mastered 'Navigation'—balancing battery efficiency with waypoint proximity. Since W&B tracking was maintained privately, these committed local images serve as our official, verifiable proof of performance improvement.
+
+### Sub-Section 3: Performance Comparison
+
+| Metric | Baseline (Untrained) | GRPO-Trained Agent |
+| :--- | :--- | :--- |
+| Action Formatting | < 10% valid JSON | 100% (Strict Pydantic) |
+| Obstacle Handling | High collision rate | Maintains safety buffer |
+| Reward Trend | Flat / Stochastic | Consistently Upward |
 
 ---
 
