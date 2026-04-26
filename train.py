@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import wandb
 import re
 import sys
 import time
@@ -530,7 +531,8 @@ def build_training_config() -> GRPOConfig:
         logging_steps          = 1,
         save_steps             = 50,
         save_total_limit       = 3,
-        report_to              = "none",               # set to "wandb" if desired
+        report_to              = "wandb",
+        run_name               = "openenv-rover-run",
         seed                   = SEED,
 
         # ── Misc ──────────────────────────────────────────────────────
