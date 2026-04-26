@@ -16,9 +16,7 @@ short_description: OpenEnv RL environment — Meta PyTorch Hackathon
 * **🌍 Live OpenEnv Simulator (HF Space):** [https://huggingface.co/spaces/atomic24/planetary-rover-navigation](https://huggingface.co/spaces/atomic24/planetary-rover-navigation)
 * **🧠 GRPO Training Run (Colab Notebook):** https://colab.research.google.com/github/Gurram-Bhaskar/planetary-rover-navigation/blob/main/train_colab.ipynb
 * **💻 Source Code Repository:** https://github.com/Gurram-Bhaskar/planetary-rover-navigation.git
-* **W&B Public Project URL:** https://wandb.ai/bhaskar-reva-university/huggingface?nw=nwuserbhaskargurram51
-* **📖 How We Built It (Blog/Video):** 
-
+* **📖 How We Built It (Blog/Video):**[Hugging Face Blog Post](https://huggingface.co/spaces/atomic24/planetary-rover-navigation/blob/main/BLOG.md)
 
 ## 🚀 Project Overview
 
